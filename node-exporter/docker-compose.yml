@@ -1,0 +1,18 @@
+services:
+  node-exporter:
+    image: prom/node-exporter:latest          # или quay.io/prometheus/node-exporter:latest
+    container_name: node-exporter
+    restart: unless-stopped
+    network_mode: host                        # самый надёжный способ для метрик хоста
+    pid: host                                 # нужно для некоторых коллекторов (процессы, etc.)
+    ports:
+      - "9100:9100"                           # открываем порт (можно убрать, если используешь host network и не нужен внешний доступ)
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro,rslave                   # rslave важно для правильного монтирования подсистем
+    command:
+      - '--path.procfs=/host/proc'
+      - '--path.rootfs=/host'
+      - '--path.sysfs=/host/sys'
+      - '--collector.filesystem.ignored-mount-points=^/(sys|proc|dev|host|etc|rootfs/var/lib/docker/containers|rootfs/var/lib/docker/overlay2|rootfs/run/docker/netns)($$|/)'
