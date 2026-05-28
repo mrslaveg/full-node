@@ -21,6 +21,15 @@ fi
 read -p "Введите имя нового пользователя [dj]: " USERNAME
 USERNAME=${USERNAME:-dj}
 
+# Запрашиваем пароль (ввод скрыт для безопасности)
+read -s -p "Введите пароль для пользователя $USERNAME (для sudo): " USER_PASSWORD
+echo "" # Перенос строки после скрытого ввода
+
+if [ -z "$USER_PASSWORD" ]; then
+    echo -e "${YELLOW}Ошибка: Пароль не может быть пустым!${NC}"
+    exit 1
+fi
+
 read -p "Вставьте ваш публичный SSH-ключ для $USERNAME: " SSH_KEY
 if [ -z "$SSH_KEY" ]; then
     echo -e "${YELLOW}Ошибка: SSH-ключ обязателен для безопасности!${NC}"
@@ -41,18 +50,21 @@ fi
 echo "--------------------------------------------------------"
 echo -e "${GREEN}Конфигурация Remnanode получена.${NC}"
 
-# 4. Обновление системы
-echo -e "\n${GREEN}[1/9] Обновление пакетов системы...${NC}"
+# 4. Обновление системы и установка базового софта
+echo -e "\n${GREEN}[1/9] Обновление пакетов и установка базовых утилит (curl, git, mc, htop)...${NC}"
 apt update && apt upgrade -y
+# Ставим всё необходимое разом
+apt install -y curl git mc htop
 
 # 5. Создание пользователя и добавление в sudo
 echo -e "\n${GREEN}[2/9] Создание пользователя $USERNAME...${NC}"
 if id "$USERNAME" &>/dev/null; then
-    echo "Пользователь $USERNAME уже существует."
+    echo "Пользователь $USERNAME уже существует. Обновляем ему пароль."
+    echo "$USERNAME:$USER_PASSWORD" | chpasswd
 else
     adduser --disabled-password --gecos "" $USERNAME
-    # Случайный сложный пароль (вход строго по ключам)
-    echo "$USERNAME:$(openssl rand -base64 14)" | chpasswd
+    # Устанавливаем твой введенный пароль
+    echo "$USERNAME:$USER_PASSWORD" | chpasswd
     usermod -aG sudo $USERNAME
 fi
 
@@ -117,7 +129,6 @@ read -p "Введите ваш домен для маскировки (напр�
 if [ -z "$DOMAIN_NAME" ]; then
     echo -e "${YELLOW}Домен не введен. Пропускаем развертывание Self-Steal.${NC}"
 else
-    # Создаем корневую директорию для selfsteal
     mkdir -p /opt/selfsteal
 
     # 10.1. Генерируем Caddyfile
@@ -134,18 +145,13 @@ $DOMAIN_NAME {
 EOF
     echo "[-] Caddyfile успешно сгенерирован."
 
-    # 10.2. Клонируем репозиторий во временную папку для копирования структуры
+    # 10.2. Скачиваем структуру из репозитория
     echo "[-] Загрузка структуры Self-Steal из GitHub..."
     TMP_DIR=$(mktemp -d)
     git clone --depth 1 https://github.com/mrslaveg/selfsteal.git "$TMP_DIR"
     
-    # Переносим docker-compose.yml из корня репо
     cp "$TMP_DIR/docker-compose.yml" /opt/selfsteal/docker-compose.yml
-    
-    # Переносим папку site со всеми иконками и index.html
     cp -r "$TMP_DIR/site" /opt/selfsteal/
-    
-    # Очищаем за собой временные файлы
     rm -rf "$TMP_DIR"
     echo "[-] Файлы сайта и docker-compose.yml успешно размещены в /opt/selfsteal/"
 
