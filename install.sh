@@ -53,7 +53,6 @@ echo -e "${GREEN}Конфигурация Remnanode получена.${NC}"
 # 4. Обновление системы и установка базового софта
 echo -e "\n${GREEN}[1/9] Обновление пакетов и установка базовых утилит (curl, git, mc, htop)...${NC}"
 apt update && apt upgrade -y
-# Ставим всё необходимое разом
 apt install -y curl git mc htop
 
 # 5. Создание пользователя и добавление в sudo
@@ -129,6 +128,7 @@ read -p "Введите ваш домен для маскировки (напр�
 if [ -z "$DOMAIN_NAME" ]; then
     echo -e "${YELLOW}Домен не введен. Пропускаем развертывание Self-Steal.${NC}"
 else
+    # Создаем корневую директорию для selfsteal
     mkdir -p /opt/selfsteal
 
     # 10.1. Генерируем Caddyfile
@@ -145,13 +145,34 @@ $DOMAIN_NAME {
 EOF
     echo "[-] Caddyfile успешно сгенерирован."
 
-    # 10.2. Скачиваем структуру из репозитория
+    # 10.2. Скачиваем структуру из репозитория с учетом подпапки selfsteal
     echo "[-] Загрузка структуры Self-Steal из GitHub..."
     TMP_DIR=$(mktemp -d)
     git clone --depth 1 https://github.com/mrslaveg/selfsteal.git "$TMP_DIR"
     
-    cp "$TMP_DIR/docker-compose.yml" /opt/selfsteal/docker-compose.yml
-    cp -r "$TMP_DIR/site" /opt/selfsteal/
+    REPO_SUBDIR="$TMP_DIR/selfsteal"
+    
+    if [ -d "$REPO_SUBDIR" ]; then
+        # Копируем docker-compose.yml из подпапки selfsteal
+        if [ -f "$REPO_SUBDIR/docker-compose.yml" ]; then
+            cp "$REPO_SUBDIR/docker-compose.yml" /opt/selfsteal/docker-compose.yml
+        else
+            cp "$REPO_SUBDIR/Docker-compose.yml" /opt/selfsteal/docker-compose.yml 2>/dev/null || true
+        fi
+        
+        # Копируем папку site целиком в /opt/selfsteal/
+        if [ -d "$REPO_SUBDIR/site" ]; then
+            cp -r "$REPO_SUBDIR/site" /opt/selfsteal/
+        else
+            echo -e "${YELLOW}Предупреждение: Папка 'site' не найдена внутри подпапки selfsteal!${NC}"
+            mkdir -p /opt/selfsteal/site
+        fi
+    else
+        echo -e "${YELLOW}Предупреждение: Подпапка 'selfsteal' не найдена в репо. Пробуем корень...${NC}"
+        cp "$TMP_DIR/docker-compose.yml" /opt/selfsteal/docker-compose.yml 2>/dev/null || true
+        cp -r "$TMP_DIR/site" /opt/selfsteal/ 2>/dev/null || mkdir -p /opt/selfsteal/site
+    fi
+    
     rm -rf "$TMP_DIR"
     echo "[-] Файлы сайта и docker-compose.yml успешно размещены в /opt/selfsteal/"
 
@@ -190,7 +211,7 @@ ufw allow https
 # Доверенный IP для порта 2222
 ufw allow from 89.127.203.170 to any port 2222 proto tcp
 
-# Включаем и перезагружаем
+# Включаем и перезагружаем файрвол
 echo y | ufw enable
 ufw reload
 echo -e "${GREEN}[+] Файрвол UFW успешно настроен!${NC}"
