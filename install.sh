@@ -696,4 +696,3 @@ if [[ "$REBOOT_NOW" == "y" || "$REBOOT_NOW" == "Y" ]]; then
     reboot
 
 fi
-```
