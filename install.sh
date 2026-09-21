@@ -1,3 +1,4 @@
+```bash
 #!/bin/bash
 
 # Выход при любой ошибке
@@ -7,7 +8,9 @@ set -e
 GREEN='\033[0;32m'
 CYAN='\033[0;36m'
 YELLOW='\033[1;33m'
+RED='\033[0;31m'
 NC='\033[0m'
+
 
 echo -e "${CYAN}=== Ультимативный скрипт настройки VPS ===${NC}"
 echo -e "${CYAN}=== Remnanode + Self-Steal + Beszel + UFW + Fail2ban ===${NC}\n"
@@ -24,7 +27,32 @@ fi
 
 
 # ============================================================
-# 2. Сбор данных
+# 2. GitHub token
+# ============================================================
+
+echo -e "${CYAN}--- GitHub ---${NC}"
+
+# Если GITHUB_TOKEN уже передан через environment —
+# используем его и ничего дополнительно не спрашиваем.
+if [ -z "${GITHUB_TOKEN:-}" ]; then
+
+    read -s -p "Введите GitHub token для доступа к private repo: " GITHUB_TOKEN
+    echo ""
+
+    if [ -z "$GITHUB_TOKEN" ]; then
+        echo -e "${RED}Ошибка: GitHub token не может быть пустым!${NC}"
+        exit 1
+    fi
+
+else
+
+    echo -e "${GREEN}[+] GitHub token получен из environment.${NC}"
+
+fi
+
+
+# ============================================================
+# 3. Сбор данных
 # ============================================================
 
 read -p "Введите имя нового пользователя [dj]: " USERNAME
@@ -47,7 +75,7 @@ fi
 
 
 # ============================================================
-# 3. Получение docker-compose.yml Remnanode
+# 4. Получение docker-compose.yml Remnanode
 # ============================================================
 
 echo -e "\n${CYAN}--- Ввод конфигурации Docker Compose для Remnanode ---${NC}"
@@ -67,7 +95,7 @@ echo -e "${GREEN}Конфигурация Remnanode получена.${NC}"
 
 
 # ============================================================
-# 4. Обновление системы
+# 5. Обновление системы
 # ============================================================
 
 echo -e "\n${GREEN}[1/10] Обновление системы и установка базовых пакетов...${NC}"
@@ -78,7 +106,7 @@ apt install -y curl git mc htop
 
 
 # ============================================================
-# 5. Создание пользователя
+# 6. Создание пользователя
 # ============================================================
 
 echo -e "\n${GREEN}[2/10] Создание пользователя $USERNAME...${NC}"
@@ -100,7 +128,7 @@ fi
 
 
 # ============================================================
-# 6. SSH
+# 7. SSH
 # ============================================================
 
 echo -e "\n${GREEN}[3/10] Настройка SSH...${NC}"
@@ -139,7 +167,7 @@ echo "    Public key       = enabled"
 
 
 # ============================================================
-# 7. Fail2ban
+# 8. Fail2ban
 # ============================================================
 
 echo -e "\n${GREEN}[4/10] Установка и настройка Fail2ban...${NC}"
@@ -165,7 +193,7 @@ fail2ban-client status sshd
 
 
 # ============================================================
-# 8. Docker
+# 9. Docker
 # ============================================================
 
 echo -e "\n${GREEN}[5/10] Проверка и установка Docker...${NC}"
@@ -187,7 +215,7 @@ usermod -aG docker "$USERNAME"
 
 
 # ============================================================
-# 9. Beszel Agent
+# 10. Beszel Agent
 # ============================================================
 
 echo -e "\n${GREEN}[6/10] Установка Beszel Agent...${NC}"
@@ -222,7 +250,7 @@ echo -e "${GREEN}[+] Beszel Agent успешно установлен.${NC}"
 
 
 # ============================================================
-# 10. Remnanode
+# 11. Remnanode
 # ============================================================
 
 echo -e "\n${GREEN}[7/10] Установка и запуск Remnanode...${NC}"
@@ -239,7 +267,7 @@ echo -e "${GREEN}[+] Remnanode запущен.${NC}"
 
 
 # ============================================================
-# 11. Генерация X25519
+# 12. Генерация X25519
 # ============================================================
 
 echo -e "\n${GREEN}[8/10] Генерация ключей Xray (X25519)...${NC}"
@@ -269,7 +297,7 @@ fi
 
 
 # ============================================================
-# 12. Self-Steal
+# 13. Self-Steal
 # ============================================================
 
 echo -e "\n${GREEN}[9/10] Настройка Self-Steal (Caddy)...${NC}"
@@ -302,58 +330,120 @@ EOF
 
     echo "[-] Caddyfile создан."
 
+
     # --------------------------------------------------------
-    # Клонирование Self-Steal
+    # Загрузка Self-Steal из private full-node
     # --------------------------------------------------------
 
-    echo "[-] Загрузка Self-Steal из GitHub..."
+    echo "[-] Загрузка Self-Steal из private GitHub repository..."
 
     TMP_DIR=$(mktemp -d)
 
-    git clone --depth 1 \
-        https://github.com/mrslaveg/selfsteal.git \
-        "$TMP_DIR"
+    cleanup_tmp() {
+        rm -rf "$TMP_DIR"
+    }
 
-    REPO_SUBDIR="$TMP_DIR/selfsteal"
+    trap cleanup_tmp EXIT
 
-    if [ -d "$REPO_SUBDIR" ]; then
 
-        if [ -f "$REPO_SUBDIR/docker-compose.yml" ]; then
+    echo "[-] Получение архива full-node..."
 
-            cp "$REPO_SUBDIR/docker-compose.yml" \
-               /opt/selfsteal/docker-compose.yml
+    curl -fsSL \
+        -L \
+        -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+        -H "Accept: application/vnd.github+json" \
+        "https://api.github.com/repos/mrslaveg/full-node/tarball/main" \
+        -o "$TMP_DIR/full-node.tar.gz"
 
-        elif [ -f "$REPO_SUBDIR/Docker-compose.yml" ]; then
 
-            cp "$REPO_SUBDIR/Docker-compose.yml" \
-               /opt/selfsteal/docker-compose.yml
+    echo "[-] Распаковка full-node..."
 
-        fi
+    tar -xzf "$TMP_DIR/full-node.tar.gz" -C "$TMP_DIR"
 
-        if [ -d "$REPO_SUBDIR/site" ]; then
 
-            cp -r "$REPO_SUBDIR/site" /opt/selfsteal/
+    # GitHub создаёт каталог вида:
+    # mrslaveg-full-node-<commit>
+    REPO_DIR=$(find "$TMP_DIR" \
+        -mindepth 1 \
+        -maxdepth 1 \
+        -type d \
+        -print -quit)
 
-        else
 
-            echo -e "${YELLOW}Предупреждение: папка site не найдена.${NC}"
-            mkdir -p /opt/selfsteal/site
+    if [ -z "$REPO_DIR" ]; then
 
-        fi
-
-    else
-
-        echo -e "${YELLOW}Подпапка selfsteal не найдена. Используем корень репозитория.${NC}"
-
-        cp "$TMP_DIR/docker-compose.yml" \
-           /opt/selfsteal/docker-compose.yml 2>/dev/null || true
-
-        cp -r "$TMP_DIR/site" \
-           /opt/selfsteal/ 2>/dev/null || mkdir -p /opt/selfsteal/site
+        echo -e "${RED}Ошибка: каталог full-node не найден после распаковки.${NC}"
+        exit 1
 
     fi
 
+
+    echo "[-] Найден каталог:"
+    echo "    $REPO_DIR"
+
+
+    # --------------------------------------------------------
+    # Проверяем структуру Self-Steal
+    # --------------------------------------------------------
+
+    if [ ! -d "$REPO_DIR/selfsteal" ]; then
+
+        echo -e "${RED}Ошибка: каталог selfsteal отсутствует в full-node.${NC}"
+        exit 1
+
+    fi
+
+
+    if [ ! -f "$REPO_DIR/selfsteal/docker-compose.yml" ]; then
+
+        echo -e "${RED}Ошибка: selfsteal/docker-compose.yml отсутствует.${NC}"
+        exit 1
+
+    fi
+
+
+    # --------------------------------------------------------
+    # Копируем docker-compose.yml
+    # --------------------------------------------------------
+
+    cp "$REPO_DIR/selfsteal/docker-compose.yml" \
+       /opt/selfsteal/docker-compose.yml
+
+
+    # --------------------------------------------------------
+    # Копируем site
+    # --------------------------------------------------------
+
+    rm -rf /opt/selfsteal/site
+
+    if [ -d "$REPO_DIR/selfsteal/site" ]; then
+
+        cp -r "$REPO_DIR/selfsteal/site" \
+              /opt/selfsteal/
+
+    else
+
+        echo -e "${YELLOW}Предупреждение: папка site не найдена.${NC}"
+        mkdir -p /opt/selfsteal/site
+
+    fi
+
+
+    # --------------------------------------------------------
+    # Удаляем временные файлы
+    # --------------------------------------------------------
+
     rm -rf "$TMP_DIR"
+
+    trap - EXIT
+
+
+    # --------------------------------------------------------
+    # Удаляем GitHub token из environment
+    # --------------------------------------------------------
+
+    unset GITHUB_TOKEN
+
 
     # --------------------------------------------------------
     # Запуск Caddy
@@ -371,7 +461,7 @@ fi
 
 
 # ============================================================
-# 13. UFW
+# 14. UFW
 # ============================================================
 
 echo -e "\n${GREEN}[10/10] Настройка UFW...${NC}"
@@ -467,7 +557,7 @@ echo -e "${GREEN}[+] UFW успешно настроен.${NC}"
 
 
 # ============================================================
-# 14. Финальная проверка
+# 15. Финальная проверка
 # ============================================================
 
 echo -e "\n${CYAN}========================================================${NC}"
@@ -521,9 +611,13 @@ docker ps \
 echo "--------------------------------------------------------"
 
 if ss -lnt | grep -q ':45876 '; then
+
     echo -e "${GREEN}[+] Beszel Agent слушает порт 45876.${NC}"
+
 else
+
     echo -e "${YELLOW}[!] Beszel Agent не найден на порту 45876.${NC}"
+
 fi
 
 
@@ -549,6 +643,7 @@ echo -e "\n${CYAN}========================================================${NC}"
 echo -e "${GREEN}       ВСЕ КОМПОНЕНТЫ НАСТРОЕНЫ И ЗАПУЩЕНЫ!${NC}"
 echo -e "${CYAN}========================================================${NC}"
 
+
 echo -e "\n${YELLOW}ВАЖНО:${NC}"
 echo "Откройте НОВОЕ окно терминала и проверьте SSH:"
 echo -e "${CYAN}ssh $USERNAME@<IP_СЕРВЕРА>${NC}"
@@ -560,26 +655,35 @@ echo "--------------------------------------------------------"
 
 
 # ============================================================
-# 15. Логи Self-Steal
+# 16. Логи Self-Steal
 # ============================================================
 
-read -p "Показать логи Caddy/Self-Steal прямо сейчас? (y/n): " SHOW_LOGS
+if [ -d "/opt/selfsteal" ] && \
+   [ -f "/opt/selfsteal/docker-compose.yml" ]; then
 
-if [[ "$SHOW_LOGS" == "y" || "$SHOW_LOGS" == "Y" ]]; then
+    read -p "Показать логи Caddy/Self-Steal прямо сейчас? (y/n): " SHOW_LOGS
 
-    echo -e "${CYAN}Для выхода из логов нажмите Ctrl+C${NC}"
+    if [[ "$SHOW_LOGS" == "y" || "$SHOW_LOGS" == "Y" ]]; then
 
-    sleep 2
+        echo -e "${CYAN}Для выхода из логов нажмите Ctrl+C${NC}"
 
-    cd /opt/selfsteal
+        sleep 2
 
-    docker compose logs -f -t
+        cd /opt/selfsteal
+
+        docker compose logs -f -t
+
+    fi
+
+else
+
+    echo -e "${YELLOW}Self-Steal не установлен — просмотр логов пропущен.${NC}"
 
 fi
 
 
 # ============================================================
-# 16. Перезагрузка
+# 17. Перезагрузка
 # ============================================================
 
 echo ""
@@ -593,3 +697,4 @@ if [[ "$REBOOT_NOW" == "y" || "$REBOOT_NOW" == "Y" ]]; then
     reboot
 
 fi
+```
