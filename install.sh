@@ -1,5 +1,4 @@
 #!/bin/bash
-
 # Выход при любой ошибке
 set -e
 
@@ -10,117 +9,137 @@ YELLOW='\033[1;33m'
 RED='\033[0;31m'
 NC='\033[0m'
 
-
 echo -e "${CYAN}=== Ультимативный скрипт настройки VPS ===${NC}"
-echo -e "${CYAN}=== Remnanode + Self-Steal + Beszel + UFW + Fail2ban ===${NC}\n"
-
+echo -e "${CYAN}=== Remnanode + Self-Steal + Beszel + UFW + Fail2ban + IPv6 off + BBR ===${NC}\n"
 
 # ============================================================
 # 1. Проверка прав root
 # ============================================================
-
 if [ "$EUID" -ne 0 ]; then
     echo "Пожалуйста, запустите скрипт от имени root."
     exit 1
 fi
 
-
 # ============================================================
 # 2. Сбор данных
 # ============================================================
-
 read -p "Введите имя нового пользователя [dj]: " USERNAME
 USERNAME=${USERNAME:-dj}
 
 read -s -p "Введите пароль для пользователя $USERNAME (для sudo): " USER_PASSWORD
 echo ""
-
 if [ -z "$USER_PASSWORD" ]; then
     echo -e "${YELLOW}Ошибка: пароль не может быть пустым!${NC}"
     exit 1
 fi
 
 read -p "Вставьте ваш публичный SSH-ключ для $USERNAME: " SSH_KEY
-
 if [ -z "$SSH_KEY" ]; then
     echo -e "${YELLOW}Ошибка: SSH-ключ обязателен для безопасности!${NC}"
     exit 1
 fi
 
-
 # ============================================================
 # 3. Получение docker-compose.yml Remnanode
 # ============================================================
-
 echo -e "\n${CYAN}--- Ввод конфигурации Docker Compose для Remnanode ---${NC}"
 echo "Скопируйте docker-compose.yml из панели Remnawave."
 echo -e "${YELLOW}Когда закончите вставку, нажмите Enter, затем Ctrl+D:${NC}"
 echo "--------------------------------------------------------"
-
 COMPOSE_CONTENT=$(cat)
 
 if [ -z "$COMPOSE_CONTENT" ]; then
     echo -e "${YELLOW}Ошибка: конфигурация Docker Compose не может быть пустой!${NC}"
     exit 1
 fi
-
 echo "--------------------------------------------------------"
 echo -e "${GREEN}Конфигурация Remnanode получена.${NC}"
-
 
 # ============================================================
 # 4. Обновление системы
 # ============================================================
-
-echo -e "\n${GREEN}[1/10] Обновление системы и установка базовых пакетов...${NC}"
-
+echo -e "\n${GREEN}[1/11] Обновление системы и установка базовых пакетов...${NC}"
 apt update
 apt upgrade -y
 apt install -y curl git mc htop
 
-
 # ============================================================
-# 5. Создание пользователя
+# 5. Отключение IPv6 (sysctl + GRUB) и включение BBR
 # ============================================================
+echo -e "\n${GREEN}[2/11] Отключение IPv6 и включение BBR...${NC}"
 
-echo -e "\n${GREEN}[2/10] Создание пользователя $USERNAME...${NC}"
+# --- Sysctl: полное отключение IPv6 ---
+cat > /etc/sysctl.d/99-disable-ipv6.conf <<'EOF'
+net.ipv6.conf.all.disable_ipv6 = 1
+net.ipv6.conf.default.disable_ipv6 = 1
+net.ipv6.conf.lo.disable_ipv6 = 1
+EOF
 
-if id "$USERNAME" &>/dev/null; then
+# --- Sysctl: BBR ---
+cat > /etc/sysctl.d/99-bbr.conf <<'EOF'
+net.core.default_qdisc = fq
+net.ipv4.tcp_congestion_control = bbr
+EOF
 
-    echo "Пользователь $USERNAME уже существует."
-    echo "$USERNAME:$USER_PASSWORD" | chpasswd
+sysctl --system
 
+# --- GRUB: ipv6.disable=1 ---
+if [ -f /etc/default/grub ]; then
+    CHANGED=0
+    if ! grep -q 'ipv6.disable=1' /etc/default/grub; then
+        # GRUB_CMDLINE_LINUX_DEFAULT
+        if grep -q '^GRUB_CMDLINE_LINUX_DEFAULT=' /etc/default/grub; then
+            sed -i 's/^GRUB_CMDLINE_LINUX_DEFAULT="/GRUB_CMDLINE_LINUX_DEFAULT="ipv6.disable=1 /' /etc/default/grub
+            CHANGED=1
+        fi
+        # GRUB_CMDLINE_LINUX
+        if grep -q '^GRUB_CMDLINE_LINUX=' /etc/default/grub; then
+            sed -i 's/^GRUB_CMDLINE_LINUX="/GRUB_CMDLINE_LINUX="ipv6.disable=1 /' /etc/default/grub
+            CHANGED=1
+        fi
+        if [ $CHANGED -eq 1 ]; then
+            update-grub
+            echo -e "${GREEN}[+] Параметр ipv6.disable=1 добавлен в GRUB.${NC}"
+        else
+            echo -e "${YELLOW}[!] Не удалось найти подходящие строки GRUB_CMDLINE_* для изменения.${NC}"
+        fi
+    else
+        echo "ipv6.disable=1 уже присутствует в GRUB."
+    fi
 else
-
-    adduser --disabled-password --gecos "" "$USERNAME"
-
-    echo "$USERNAME:$USER_PASSWORD" | chpasswd
-
-    usermod -aG sudo "$USERNAME"
-
+    echo -e "${YELLOW}Файл /etc/default/grub не найден. Пропуск настройки GRUB.${NC}"
 fi
 
+echo -e "\n${CYAN}Текущий congestion control:${NC}"
+sysctl net.ipv4.tcp_congestion_control
+echo -e "${CYAN}Доступные алгоритмы:${NC}"
+sysctl net.ipv4.tcp_available_congestion_control
 
 # ============================================================
-# 6. SSH
+# 6. Создание пользователя
 # ============================================================
+echo -e "\n${GREEN}[3/11] Создание пользователя $USERNAME...${NC}"
+if id "$USERNAME" &>/dev/null; then
+    echo "Пользователь $USERNAME уже существует."
+    echo "$USERNAME:$USER_PASSWORD" | chpasswd
+else
+    adduser --disabled-password --gecos "" "$USERNAME"
+    echo "$USERNAME:$USER_PASSWORD" | chpasswd
+    usermod -aG sudo "$USERNAME"
+fi
 
-echo -e "\n${GREEN}[3/10] Настройка SSH...${NC}"
-
+# ============================================================
+# 7. SSH
+# ============================================================
+echo -e "\n${GREEN}[4/11] Настройка SSH...${NC}"
 USER_HOME="/home/$USERNAME"
-
 mkdir -p "$USER_HOME/.ssh"
-
 echo "$SSH_KEY" > "$USER_HOME/.ssh/authorized_keys"
-
 chown -R "$USERNAME:$USERNAME" "$USER_HOME/.ssh"
-
 chmod 700 "$USER_HOME/.ssh"
 chmod 600 "$USER_HOME/.ssh/authorized_keys"
 
-
 mkdir -p /etc/ssh/sshd_config.d
-
 cat > /etc/ssh/sshd_config.d/99-security.conf <<'EOF'
 PermitRootLogin no
 PasswordAuthentication no
@@ -128,10 +147,8 @@ PubkeyAuthentication yes
 KbdInteractiveAuthentication no
 EOF
 
-
 # Проверяем конфигурацию перед перезапуском
 sshd -t
-
 systemctl restart ssh
 
 echo -e "${GREEN}[+] SSH настроен:${NC}"
@@ -139,13 +156,10 @@ echo "    Root login       = disabled"
 echo "    Password auth    = disabled"
 echo "    Public key       = enabled"
 
-
 # ============================================================
-# 7. Fail2ban
+# 8. Fail2ban
 # ============================================================
-
-echo -e "\n${GREEN}[4/10] Установка и настройка Fail2ban...${NC}"
-
+echo -e "\n${GREEN}[5/11] Установка и настройка Fail2ban...${NC}"
 apt install -y fail2ban
 
 cat > /etc/fail2ban/jail.d/sshd.local <<'EOF'
@@ -162,38 +176,26 @@ echo -e "${GREEN}[+] Fail2ban настроен:${NC}"
 echo "    maxretry = 4"
 echo "    findtime = 10m"
 echo "    bantime  = 24h"
-
 fail2ban-client status sshd
 
-
 # ============================================================
-# 8. Docker
+# 9. Docker
 # ============================================================
-
-echo -e "\n${GREEN}[5/10] Проверка и установка Docker...${NC}"
-
+echo -e "\n${GREEN}[6/11] Проверка и установка Docker...${NC}"
 if ! command -v docker &> /dev/null; then
-
     curl -fsSL https://get.docker.com | sh
-
     echo "Docker установлен."
-
 else
-
     echo "Docker уже установлен."
-
 fi
 
 # Добавляем пользователя в docker group
 usermod -aG docker "$USERNAME"
 
-
 # ============================================================
-# 9. Beszel Agent
+# 10. Beszel Agent
 # ============================================================
-
-echo -e "\n${GREEN}[6/10] Установка Beszel Agent...${NC}"
-
+echo -e "\n${GREEN}[7/11] Установка Beszel Agent...${NC}"
 mkdir -p /opt/beszel-agent/beszel_agent_data
 
 cat > /opt/beszel-agent/docker-compose.yml <<'EOF'
@@ -203,11 +205,9 @@ services:
     container_name: beszel-agent
     restart: unless-stopped
     network_mode: host
-
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - ./beszel_agent_data:/var/lib/beszel-agent
-
     environment:
       LISTEN: 45876
       KEY: 'REPLACE_WITH_YOUR_BESZEL_PUBLIC_KEY'
@@ -216,428 +216,296 @@ services:
 EOF
 
 cd /opt/beszel-agent
-
 docker compose pull
 docker compose up -d
-
 echo -e "${GREEN}[+] Beszel Agent успешно установлен.${NC}"
 
-
 # ============================================================
-# 10. Remnanode
+# 11. Remnanode
 # ============================================================
-
-echo -e "\n${GREEN}[7/10] Установка и запуск Remnanode...${NC}"
-
+echo -e "\n${GREEN}[8/11] Установка и запуск Remnanode...${NC}"
 mkdir -p /opt/remnanode
-
 cd /opt/remnanode
-
 echo "$COMPOSE_CONTENT" > docker-compose.yml
-
 docker compose up -d
-
 echo -e "${GREEN}[+] Remnanode запущен.${NC}"
 
-
 # ============================================================
-# 11. Генерация X25519
+# 12. Генерация X25519
 # ============================================================
-
-echo -e "\n${GREEN}[8/10] Генерация ключей Xray (X25519)...${NC}"
-
+echo -e "\n${GREEN}[9/11] Генерация ключей Xray (X25519)...${NC}"
 sleep 3
-
 CONTAINER_ID=$(docker ps -q -f "name=remnanode")
-
 if [ -z "$CONTAINER_ID" ]; then
     CONTAINER_ID=$(docker ps -q -f "ancestor=remnawave/node")
 fi
 
 if [ -n "$CONTAINER_ID" ]; then
-
     echo -e "ID контейнера: ${CYAN}$CONTAINER_ID${NC}"
     echo "--------------------------------------------------------"
-
     docker exec "$CONTAINER_ID" xray x25519
-
     echo "--------------------------------------------------------"
-
 else
-
     echo -e "${YELLOW}Предупреждение: контейнер Remnanode не найден.${NC}"
-
 fi
 
-
 # ============================================================
-# 12. Self-Steal
+# 13. Self-Steal
 # ============================================================
-
-echo -e "\n${GREEN}[9/10] Настройка Self-Steal (Caddy)...${NC}"
-
+echo -e "\n${GREEN}[10/11] Настройка Self-Steal (Caddy)...${NC}"
 read -p "Введите ваш домен для маскировки (например, lv.technoblog.pro): " DOMAIN_NAME
 
 if [ -z "$DOMAIN_NAME" ]; then
-
     echo -e "${YELLOW}Домен не введен. Self-Steal пропускается.${NC}"
-
 else
-
     mkdir -p /opt/selfsteal
 
     # --------------------------------------------------------
     # Caddyfile
     # --------------------------------------------------------
-
     cat > /opt/selfsteal/Caddyfile <<EOF
 $DOMAIN_NAME {
     tls {
         protocols tls1.2 tls1.3
     }
-
     encode gzip
     root * /usr/share/caddy
     file_server
 }
 EOF
-
     echo "[-] Caddyfile создан."
-
 
     # --------------------------------------------------------
     # Загрузка Self-Steal из публичного full-node
     # --------------------------------------------------------
-
     echo "[-] Загрузка Self-Steal из GitHub repository..."
-
     TMP_DIR=$(mktemp -d)
-
     cleanup_tmp() {
         rm -rf "$TMP_DIR"
     }
-
     trap cleanup_tmp EXIT
 
-
     echo "[-] Клонирование full-node..."
-
     git clone --depth 1 \
         https://github.com/mrslaveg/full-node.git \
         "$TMP_DIR/full-node"
 
-
     REPO_DIR="$TMP_DIR/full-node"
-
 
     # --------------------------------------------------------
     # Проверяем структуру Self-Steal
     # --------------------------------------------------------
-
     if [ ! -d "$REPO_DIR/selfsteal" ]; then
-
         echo -e "${RED}Ошибка: каталог selfsteal отсутствует в full-node.${NC}"
         exit 1
-
     fi
-
 
     if [ ! -f "$REPO_DIR/selfsteal/docker-compose.yml" ]; then
-
         echo -e "${RED}Ошибка: selfsteal/docker-compose.yml отсутствует.${NC}"
         exit 1
-
     fi
 
-
     echo "[-] Self-Steal найден."
-
 
     # --------------------------------------------------------
     # Копируем docker-compose.yml
     # --------------------------------------------------------
-
     cp "$REPO_DIR/selfsteal/docker-compose.yml" \
        /opt/selfsteal/docker-compose.yml
-
 
     # --------------------------------------------------------
     # Копируем site
     # --------------------------------------------------------
-
     rm -rf /opt/selfsteal/site
-
     if [ -d "$REPO_DIR/selfsteal/site" ]; then
-
         cp -r "$REPO_DIR/selfsteal/site" \
               /opt/selfsteal/
-
     else
-
         echo -e "${YELLOW}Предупреждение: папка site не найдена.${NC}"
         mkdir -p /opt/selfsteal/site
-
     fi
-
 
     # --------------------------------------------------------
     # Удаляем временные файлы
     # --------------------------------------------------------
-
     rm -rf "$TMP_DIR"
-
     trap - EXIT
-
 
     # --------------------------------------------------------
     # Запуск Caddy
     # --------------------------------------------------------
-
     cd /opt/selfsteal
-
     docker compose pull
     docker compose up -d
-
     echo -e "${GREEN}[+] Self-Steal успешно запущен.${NC}"
     echo "    Домен: $DOMAIN_NAME"
-
 fi
 
-
 # ============================================================
-# 13. UFW
+# 14. UFW
 # ============================================================
-
-echo -e "\n${GREEN}[10/10] Настройка UFW...${NC}"
+echo -e "\n${GREEN}[11/11] Настройка UFW...${NC}"
 
 if ! command -v ufw &> /dev/null; then
-
     echo "[-] Установка UFW..."
-
     apt install -y ufw
-
 else
-
     echo "[-] UFW уже установлен."
-
 fi
-
 
 # ------------------------------------------------------------
 # Отключение IPv6 в UFW
 # ------------------------------------------------------------
-
 echo "[-] Отключение IPv6 в UFW..."
-
 if [ -f /etc/default/ufw ]; then
     sed -i 's/^IPV6=yes/IPV6=no/' /etc/default/ufw
 fi
 
-
 # ------------------------------------------------------------
 # Сброс старых правил
 # ------------------------------------------------------------
-
 echo "[-] Сброс правил UFW..."
-
 echo y | ufw reset
-
 ufw default deny incoming
 ufw default allow outgoing
-
 
 # ------------------------------------------------------------
 # Основные порты
 # ------------------------------------------------------------
-
 echo "[-] Разрешение SSH..."
-
 ufw allow ssh
-
 
 # HTTP нужен Caddy для HTTP → HTTPS redirect
 echo "[-] Разрешение HTTP..."
-
 ufw allow http
-
 
 # HTTPS
 echo "[-] Разрешение HTTPS..."
-
 ufw allow https
-
 
 # ------------------------------------------------------------
 # Remnawave Node
 # ------------------------------------------------------------
-
 echo "[-] Разрешение Remnawave Node :2222 только для 89.127.203.170..."
-
 ufw allow from 89.127.203.170 \
     to any port 2222 proto tcp
-
 
 # ------------------------------------------------------------
 # Beszel Agent
 # ------------------------------------------------------------
-
 echo "[-] Разрешение Beszel Agent :45876 только для 217.177.44.148..."
-
 ufw allow from 217.177.44.148 \
     to any port 45876 proto tcp
-
 
 # ------------------------------------------------------------
 # Включение UFW
 # ------------------------------------------------------------
-
 echo "[-] Включение UFW..."
-
 echo y | ufw enable
-
 ufw reload
 
 echo -e "${GREEN}[+] UFW успешно настроен.${NC}"
 
-
 # ============================================================
-# 14. Финальная проверка
+# 15. Финальная проверка
 # ============================================================
-
 echo -e "\n${CYAN}========================================================${NC}"
 echo -e "${CYAN}             ФИНАЛЬНАЯ ПРОВЕРКА СИСТЕМЫ${NC}"
 echo -e "${CYAN}========================================================${NC}"
 
-
 # ------------------------------------------------------------
 # SSH
 # ------------------------------------------------------------
-
 echo -e "\n${CYAN}--- SSH ---${NC}"
-
 sshd -T | grep -E \
     'permitrootlogin|passwordauthentication|kbdinteractiveauthentication|pubkeyauthentication'
-
 
 # ------------------------------------------------------------
 # Fail2ban
 # ------------------------------------------------------------
-
 echo -e "\n${CYAN}--- Fail2ban ---${NC}"
-
 fail2ban-client status
-
 echo "--------------------------------------------------------"
-
 fail2ban-client status sshd
-
 
 # ------------------------------------------------------------
 # Docker
 # ------------------------------------------------------------
-
 echo -e "\n${CYAN}--- Docker containers ---${NC}"
-
 docker ps --format \
     'table {{.Names}}\t{{.Status}}\t{{.Ports}}'
-
 
 # ------------------------------------------------------------
 # Beszel Agent
 # ------------------------------------------------------------
-
 echo -e "\n${CYAN}--- Beszel Agent ---${NC}"
-
 docker ps \
     --filter "name=beszel-agent" \
     --format 'table {{.Names}}\t{{.Status}}'
-
 echo "--------------------------------------------------------"
-
 if ss -lnt | grep -q ':45876 '; then
-
     echo -e "${GREEN}[+] Beszel Agent слушает порт 45876.${NC}"
-
 else
-
     echo -e "${YELLOW}[!] Beszel Agent не найден на порту 45876.${NC}"
-
 fi
 
+# ------------------------------------------------------------
+# BBR и IPv6
+# ------------------------------------------------------------
+echo -e "\n${CYAN}--- BBR ---${NC}"
+sysctl net.ipv4.tcp_congestion_control
+sysctl net.core.default_qdisc
+
+echo -e "\n${CYAN}--- IPv6 (sysctl) ---${NC}"
+sysctl net.ipv6.conf.all.disable_ipv6
+sysctl net.ipv6.conf.default.disable_ipv6
 
 # ------------------------------------------------------------
 # UFW
 # ------------------------------------------------------------
-
 echo -e "\n${CYAN}--- UFW ---${NC}"
-
 ufw status verbose
-
 
 # ------------------------------------------------------------
 # Открытые порты
 # ------------------------------------------------------------
-
 echo -e "\n${CYAN}--- Открытые TCP/UDP порты ---${NC}"
-
 ss -lntup
-
 
 echo -e "\n${CYAN}========================================================${NC}"
 echo -e "${GREEN}       ВСЕ КОМПОНЕНТЫ НАСТРОЕНЫ И ЗАПУЩЕНЫ!${NC}"
 echo -e "${CYAN}========================================================${NC}"
 
-
 echo -e "\n${YELLOW}ВАЖНО:${NC}"
 echo "Откройте НОВОЕ окно терминала и проверьте SSH:"
 echo -e "${CYAN}ssh $USERNAME@<IP_СЕРВЕРА>${NC}"
-
 echo "Не закрывайте текущую SSH-сессию, пока не убедитесь,"
 echo "что вход по новому пользователю и ключу работает."
-
 echo "--------------------------------------------------------"
-
+echo -e "${YELLOW}После перезагрузки IPv6 будет полностью отключён через GRUB.${NC}"
 
 # ============================================================
-# 15. Логи Self-Steal
+# 16. Логи Self-Steal
 # ============================================================
-
 if [ -d "/opt/selfsteal" ] && \
    [ -f "/opt/selfsteal/docker-compose.yml" ]; then
-
     read -p "Показать логи Caddy/Self-Steal прямо сейчас? (y/n): " SHOW_LOGS
-
     if [[ "$SHOW_LOGS" == "y" || "$SHOW_LOGS" == "Y" ]]; then
-
         echo -e "${CYAN}Для выхода из логов нажмите Ctrl+C${NC}"
-
         sleep 2
-
         cd /opt/selfsteal
-
         docker compose logs -f -t
-
     fi
-
 else
-
     echo -e "${YELLOW}Self-Steal не установлен — просмотр логов пропущен.${NC}"
-
 fi
 
-
 # ============================================================
-# 16. Перезагрузка
+# 17. Перезагрузка
 # ============================================================
-
 echo ""
-
-read -p "Перезагрузить сервер сейчас для применения обновлений? (y/n): " REBOOT_NOW
-
+read -p "Перезагрузить сервер сейчас для применения обновлений и GRUB? (y/n): " REBOOT_NOW
 if [[ "$REBOOT_NOW" == "y" || "$REBOOT_NOW" == "Y" ]]; then
-
     echo "Перезагрузка..."
-
     reboot
-
 fi
