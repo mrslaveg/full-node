@@ -196,9 +196,20 @@ usermod -aG docker "$USERNAME"
 # 10. Beszel Agent
 # ============================================================
 echo -e "\n${GREEN}[7/11] Установка Beszel Agent...${NC}"
-mkdir -p /opt/beszel-agent/beszel_agent_data
 
-cat > /opt/beszel-agent/docker-compose.yml <<'EOF'
+# Спрашиваем данные у пользователя
+echo -e "${CYAN}Данные для Beszel Agent:${NC}"
+read -p "Введите Beszel Public Key: " BESZEL_KEY
+read -p "Введите Beszel Token: " BESZEL_TOKEN
+read -p "Введите Hub URL [https://beszel.technoblog.pro]: " BESZEL_HUB
+BESZEL_HUB=${BESZEL_HUB:-https://beszel.technoblog.pro}
+
+if [ -z "$BESZEL_KEY" ] || [ -z "$BESZEL_TOKEN" ]; then
+    echo -e "${YELLOW}Ключ или токен не введены. Beszel Agent пропускается.${NC}"
+else
+    mkdir -p /opt/beszel-agent/beszel_agent_data
+
+    cat > /opt/beszel-agent/docker-compose.yml <<EOF
 services:
   beszel-agent:
     image: henrygd/beszel-agent
@@ -210,15 +221,16 @@ services:
       - ./beszel_agent_data:/var/lib/beszel-agent
     environment:
       LISTEN: 45876
-      KEY: 'REPLACE_WITH_YOUR_BESZEL_PUBLIC_KEY'
-      TOKEN: 'REPLACE_WITH_YOUR_BESZEL_TOKEN'
-      HUB_URL: 'https://beszel.technoblog.pro'
+      KEY: '${BESZEL_KEY}'
+      TOKEN: '${BESZEL_TOKEN}'
+      HUB_URL: '${BESZEL_HUB}'
 EOF
 
-cd /opt/beszel-agent
-docker compose pull
-docker compose up -d
-echo -e "${GREEN}[+] Beszel Agent успешно установлен.${NC}"
+    cd /opt/beszel-agent
+    docker compose pull
+    docker compose up -d
+    echo -e "${GREEN}[+] Beszel Agent успешно установлен и запущен.${NC}"
+fi
 
 # ============================================================
 # 11. Remnanode
