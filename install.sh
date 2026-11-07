@@ -26,12 +26,24 @@ fi
 read -p "Введите имя нового пользователя [dj]: " USERNAME
 USERNAME=${USERNAME:-dj}
 
-read -s -p "Введите пароль для пользователя $USERNAME (для sudo): " USER_PASSWORD
-echo ""
-if [ -z "$USER_PASSWORD" ]; then
-    echo -e "${YELLOW}Ошибка: пароль не может быть пустым!${NC}"
-    exit 1
-fi
+# Ввод пароля с подтверждением
+while true; do
+    read -s -p "Введите пароль для пользователя $USERNAME (для sudo): " USER_PASSWORD
+    echo ""
+    read -s -p "Повторите пароль: " USER_PASSWORD2
+    echo ""
+
+    if [ -z "$USER_PASSWORD" ]; then
+        echo -e "${YELLOW}Ошибка: пароль не может быть пустым!${NC}"
+        continue
+    fi
+
+    if [ "$USER_PASSWORD" = "$USER_PASSWORD2" ]; then
+        break
+    else
+        echo -e "${RED}Пароли не совпадают. Попробуйте ещё раз.${NC}\n"
+    fi
+done
 
 read -p "Вставьте ваш публичный SSH-ключ для $USERNAME: " SSH_KEY
 if [ -z "$SSH_KEY" ]; then
