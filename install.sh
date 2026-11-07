@@ -147,6 +147,10 @@ PubkeyAuthentication yes
 KbdInteractiveAuthentication no
 EOF
 
+# Создаём директорию privilege separation (часто отсутствует)
+mkdir -p /run/sshd
+chmod 0755 /run/sshd
+
 # Проверяем конфигурацию перед перезапуском
 sshd -t
 systemctl restart ssh
