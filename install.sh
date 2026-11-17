@@ -437,7 +437,7 @@ echo -e "${GREEN}[+] UFW успешно настроен.${NC}"
 # ============================================================
 # 15. Cloudflare WARP (warp-native)
 # ============================================================
-echo -e "\\n\u001b[0;36m--- Установка Cloudflare WARP (warp-native) ---\u001b[0m"
+echo -e "\\n${CYAN}--- Установка Cloudflare WARP (warp-native) ---${NC}"
 read -r -p "Установить WARP для выборочного выхода Xray? (Y/n): " INSTALL_WARP
 if [[ ! "$INSTALL_WARP" =~ ^[Nn]$ ]]; then
     echo "Запуск интерактивной установки warp-native..."
