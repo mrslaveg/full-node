@@ -435,6 +435,32 @@ ufw reload
 echo -e "${GREEN}[+] UFW успешно настроен.${NC}"
 
 # ============================================================
+# 15. Cloudflare WARP (warp-native)
+# ============================================================
+echo -e "\\n\u001b[0;36m--- Установка Cloudflare WARP (warp-native) ---\u001b[0m"
+read -r -p "Установить WARP для выборочного выхода Xray? (Y/n): " INSTALL_WARP
+if [[ ! "$INSTALL_WARP" =~ ^[Nn]$ ]]; then
+    echo "Запуск интерактивной установки warp-native..."
+    WARP_INSTALLER=$(mktemp)
+    if curl -fsSL https://raw.githubusercontent.com/distillium/warp-native/main/install.sh -o "$WARP_INSTALLER"; then
+        if bash "$WARP_INSTALLER" </dev/tty; then
+            if systemctl is-active --quiet wg-quick@warp && ip link show warp >/dev/null 2>&1; then
+                echo "[+] WARP: интерфейс warp запущен."
+            else
+                echo "[!] WARP: установщик завершился, но интерфейс не активен. Проверь: warp check"
+            fi
+        else
+            echo "[!] WARP: установка завершилась с ошибкой. Остальная установка ноды продолжается."
+        fi
+    else
+        echo "[!] WARP: не удалось загрузить установщик. Остальная установка ноды продолжается."
+    fi
+    rm -f "$WARP_INSTALLER"
+else
+    echo "[-] Установка WARP пропущена."
+fi
+
+# ============================================================
 # 15. Финальная проверка
 # ============================================================
 echo -e "\n${CYAN}========================================================${NC}"
