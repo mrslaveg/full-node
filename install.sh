@@ -437,27 +437,34 @@ echo -e "${GREEN}[+] UFW успешно настроен.${NC}"
 # ============================================================
 # 15. Cloudflare WARP (warp-native)
 # ============================================================
-echo -e "\\n${CYAN}--- Установка Cloudflare WARP (warp-native) ---${NC}"
-read -r -p "Установить WARP для выборочного выхода Xray? (Y/n): " INSTALL_WARP
-if [[ ! "$INSTALL_WARP" =~ ^[Nn]$ ]]; then
-    echo "Запуск интерактивной установки warp-native..."
-    WARP_INSTALLER=$(mktemp)
-    if curl -fsSL https://raw.githubusercontent.com/distillium/warp-native/main/install.sh -o "$WARP_INSTALLER"; then
-        if bash "$WARP_INSTALLER" </dev/tty; then
-            if systemctl is-active --quiet wg-quick@warp && ip link show warp >/dev/null 2>&1; then
-                echo "[+] WARP: интерфейс warp запущен."
-            else
-                echo "[!] WARP: установщик завершился, но интерфейс не активен. Проверь: warp check"
-            fi
-        else
-            echo "[!] WARP: установка завершилась с ошибкой. Остальная установка ноды продолжается."
-        fi
-    else
-        echo "[!] WARP: не удалось загрузить установщик. Остальная установка ноды продолжается."
-    fi
-    rm -f "$WARP_INSTALLER"
+echo -e "\\n${CYAN}--- Cloudflare WARP (warp-native) ---${NC}"
+if systemctl is-active --quiet wg-quick@warp && ip link show warp >/dev/null 2>&1; then
+    echo -e "${GREEN}[+] WARP уже установлен и активен. Повторная установка не требуется.${NC}"
 else
-    echo "[-] Установка WARP пропущена."
+    read -r -p "Установить WARP для выборочного выхода Xray? [y/N]: " INSTALL_WARP
+    case "$INSTALL_WARP" in
+        y|Y|yes|YES)
+            echo "Запуск интерактивной установки warp-native..."
+            WARP_INSTALLER=$(mktemp)
+            if curl -fsSL https://raw.githubusercontent.com/distillium/warp-native/main/install.sh -o "$WARP_INSTALLER"; then
+                if bash "$WARP_INSTALLER" </dev/tty; then
+                    if systemctl is-active --quiet wg-quick@warp && ip link show warp >/dev/null 2>&1; then
+                        echo -e "${GREEN}[+] WARP: интерфейс warp запущен.${NC}"
+                    else
+                        echo "[!] WARP: установщик завершился, но интерфейс не активен. Проверь: warp check"
+                    fi
+                else
+                    echo "[!] WARP: установка завершилась с ошибкой. Остальная установка ноды продолжается."
+                fi
+            else
+                echo "[!] WARP: не удалось загрузить установщик. Остальная установка ноды продолжается."
+            fi
+            rm -f "$WARP_INSTALLER"
+            ;;
+        *)
+            echo "[-] Установка WARP пропущена."
+            ;;
+    esac
 fi
 
 # ============================================================
